@@ -1,0 +1,197 @@
+/*/procedimiento para generar sp insertar*
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GenerarScriptInsertar`(in xNombreBaseDatos varchar(100), in xNombreTabla varchar(100), 
+in xNombreProcedimiento varchar(100))
+BEGIN
+
+set @nombre_sp = xnombreProcedimiento;
+set @cabecera_sp = concat('create DEFINER=`root`@`localhost` PROCEDURE `',xNombreProcedimiento,'`');
+
+set @cantidadTabla = 0;
+set @cantidadTabla = (select count(*) from information_schema.tables  where table_schema=xNombreBaseDatos and table_name=xNombreTabla limit 1);
+
+if @cantidadTabla > 0 then 
+	drop table tblCodigo;
+end if;
+
+create table tblCodigo(
+	Indice int,
+	TextoCodigo longtext 	null
+);
+
+insert into tblcodigo(Indice, textocodigo)
+select   ordinal_position,
+		 concat('in',' x',column_name, ' ', column_type) as parametro
+			from INFORMATION_SCHEMA.COLUMNS 
+            where table_schema=xNombreBaseDatos
+			and table_name=xNombreTabla
+			order by ordinal_position asc;
+ 
+ /*Para estos temas */
+set @parametros = '';
+set @contador = 1;
+set @cantidadRegistros = 0;
+set @cantidadRegistros = 
+	(
+		select count(*) as TotalParametros from tblcodigo
+	);
+
+while @contador <= @cantidadRegistros do
+	set @parametros = 
+			(
+				select concat(@parametros, concat(textocodigo,',') )
+				from tblcodigo 
+				where indice = @contador
+			);
+        
+	set @contador = @contador +1;
+
+end while;
+
+ set @parametros =  substring(@parametros, 1,length(@parametros)-1);
+ set @parametros = concat('(',@parametros, ')');
+	
+ set @textoBegin = 'BEGIN ';
+ /*armar los parametros para la instruccion*/
+  set @textoInstruccion = concat('INSERT INTO ', xNombreTabla ,' VALUES  ');
+set @textoEnd = " END";
+set @contador = 1;
+
+
+/*parametors para agregar al insert */
+while @contador <= @cantidadRegistros do
+	
+	if @contador = 1 then
+		set @textoInstruccion = 
+        (
+			select  concat(  @textoInstruccion, '(', ' x', column_name, ',') as instruccionActualizar
+			from information_schema.columns 
+			where table_schema=xNombreBaseDatos
+            and table_name=xNombreTabla 
+			and ordinal_position = @contador 
+        );
+    elseif @contador < @cantidadRegistros  then
+		set @textoInstruccion = 
+        (
+			select  concat(@textoInstruccion, ' x', column_name, ',') as instruccionActualizar
+			from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            
+			and ordinal_position = @contador 
+        );
+			
+	elseif @contador = @cantidadRegistros then
+		set @textoInstruccion = 
+		(
+            select  concat(@textoInstruccion, ' x', column_name, ')') as instruccionActualizar
+			from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+            and table_name = xNombreTabla
+            and ordinal_position = @contador 
+		);
+    End if;
+	
+	
+    set @contador = @contador +1;
+End while;
+/*select concat(@cabecera_sp, '(', @parametros, ')', @textoBegin, @textoInstruccion);*/
+/*select @textoBegin;*/
+
+select @cabecera_sp
+union all 
+select @parametros
+union all 
+select @textoBegin
+union all 
+select @textoInstruccion
+union all 
+select @textoEnd;
+
+/*procedimiento para generar sp de actualizar*/
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GenerarScriptActualizar`(in xNombreBaseDatos varchar(100), in xNombreTabla varchar(100), 
+in xNombreProcedimiento varchar(100))
+BEGIN
+select concat('create DEFINER=`root`@`localhost` PROCEDURE `',xNombreProcedimiento,'`')
+union all
+select '('
+union all
+select parametros from (
+			select ( case 
+				when ordinal_position = 
+					(
+						select max(ordinal_position) from information_schema.columns 
+						where table_schema = xNombreBaseDatos
+						and table_name = xNombreTabla 
+                    )
+                then concat(  'in ', 'x', column_name ,' ' , column_type ) 
+                else concat(  'in ', 'x', column_name ,' ' , column_type ,',')  end )  as Parametros
+			from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            order by ordinal_position asc) tblParametros
+            
+union all
+select ')'
+UNION ALL
+select 'BEGIN'
+
+union all
+select concat( 'UPDATE ', xNombreTabla ,' SET ') as resultado
+ union all
+SELECT    consulta from ( select (case when ordinal_position = 
+			(
+				select max(ordinal_position) from information_schema.columns 
+				where table_schema = xNombreBaseDatos
+				and table_name = xNombreTabla
+			) then 
+				 concat( column_name , ' = ' ,  'x', column_name ) else concat( column_name , ' = ' ,  'x', column_name, ',' )  end) as Consulta
+			from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            and column_key != 'PRI'
+			order by ordinal_position asc) as tblConsulta
+
+union all
+/* condicion where del registro de la tabla a actualizar*/
+select concat('where ', column_name ,' = ', 'x', column_name  )
+from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            and column_key = 'PRI'
+union all
+select 'end;';
+
+END
+
+/*procedimiento para generar sp de eliminar*/
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GenerarScriptEliminar`(in xNombreBaseDatos varchar(100), in xNombreTabla varchar(100), 
+in xNombreProcedimiento varchar(100))
+BEGIN
+select concat('create DEFINER=`root`@`localhost` PROCEDURE ', xNombreProcedimiento)
+union all
+select '('
+union all
+select concat('in ',' x', column_name, ' ' , column_type)
+from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            and column_key = 'PRI' 
+
+            
+union all
+select ')'
+union all
+select ' Begin '
+union all
+select  concat('delete from ', xNombreTabla)
+union all
+/* condicion where del registro de la tabla a actualizar*/
+select concat(' where ', column_name ,' = ', 'x', column_name , ';') 
+from information_schema.columns 
+			where table_schema = xNombreBaseDatos
+			and table_name = xNombreTabla
+            and column_key = 'PRI'
+union all
+select ' end;';
+END
